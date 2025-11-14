@@ -1,0 +1,61 @@
+{
+  "name": "@dax-crafta/auth",
+  "version": "2.0.3",
+  "description": "A powerful, flexible, and secure authentication plugin for the Crafta framework. Supports JWT, social login, 2FA, RBAC, audit logging, and enterprise-grade security features.",
+  "main": "src/index.js",
+  "private": false,
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cookie-parser": "^1.4.7",
+    "csurf": "^1.11.0",
+    "express-brute": "^1.0.1",
+    "express-rate-limit": "^7.1.4",
+    "express-validator": "^7.3.0",
+    "google-auth-library": "^9.2.0",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^7.6.3",
+    "nodemailer": "^6.9.7",
+    "otplib": "^12.0.1",
+    "passport": "^0.6.0",
+    "passport-facebook": "^3.0.0",
+    "passport-github2": "^0.1.12",
+    "passport-google-oauth20": "^2.0.0",
+    "qrcode": "^1.5.3",
+    "speakeasy": "^2.0.0",
+    "validator": "^13.11.0",
+    "winston": "^3.11.0",
+    "zxcvbn": "^4.4.2"
+  },
+  "peerDependencies": {
+    "crafta": "^1.1.4"
+  },
+  "keywords": [
+    "authentication",
+    "auth",
+    "jwt",
+    "oauth",
+    "social-login",
+    "role-based-access-control",
+    "rbac",
+    "2fa",
+    "mfa",
+    "audit-logging",
+    "express",
+    "nodejs",
+    "crafta",
+    "secure-authentication",
+    "enterprise-security",
+    "user-management"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/daxp472/crafta.git"
+  },
+  "bugs": {
+    "url": "https://github.com/daxp472/crafta/issues"
+  },
+  "homepage": "https://github.com/daxp472/crafta#readme",
+  "license": "MIT",
+  "author": "Dax Patel"
+}
