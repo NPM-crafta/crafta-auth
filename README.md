@@ -4,6 +4,7 @@ A powerful, flexible, and secure authentication system for Node.js applications.
 
 [![npm version](https://img.shields.io/npm/v/@dax-crafta/auth.svg)](https://www.npmjs.com/package/@dax-crafta/auth)
 [![License](https://img.shields.io/npm/l/@dax-crafta/auth.svg)](https://github.com/daxp472/crafta/blob/main/LICENSE)
+[![Downloads](https://img.shields.io/npm/dm/@dax-crafta/auth.svg)](https://www.npmjs.com/package/@dax-crafta/auth)
 
 ## Features
 
