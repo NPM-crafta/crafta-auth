@@ -13,6 +13,8 @@ const MFAService = require('./utils/mfa');
 const PasswordPolicy = require('./utils/password-policy');
 const createAuthMiddleware = require('./middlewares/auth.middleware');
 const validators = require('./middlewares/validation.middleware');
+const { createLogger } = require('./utils/logger');
+const { runAdaptiveTests, inferFeatureFlags, testCatalog } = require('./testing/adaptive-runner');
 
 
 const defaultConfig = {
@@ -65,34 +67,43 @@ class ApiError extends Error {
 function auth(config = {}) {
   const finalConfig = { ...defaultConfig, ...config };
   finalConfig.env = { ...(defaultConfig.env || {}), ...(config.env || process.env) };
+  const logger = createLogger(finalConfig.logging !== false);
 
   if (!finalConfig.env?.JWT_SECRET) {
+    logger.logError('JWT_SECRET is required in environment configuration');
     throw new Error('JWT_SECRET is required in environment configuration');
   }
 
   if (finalConfig.emailVerification && !finalConfig.smtp) {
+    logger.logError('SMTP configuration is required for email verification');
     throw new Error('SMTP configuration is required for email verification');
   }
 
   // ------------------------------------------
-  // ✅ FIX — Proper MongoDB Connection
+  // ✅ Proper MongoDB Connection
   // ------------------------------------------
   if (mongoose.connection.readyState === 0) {
     mongoose.connect(finalConfig.mongoUrl, {
       useNewUrlParser: true,
       useUnifiedTopology: true
     })
-      .then(() => console.log("📦 Auth Library MongoDB Connected"))
-      .catch(err => console.error("❌ Auth Library MongoDB Error:", err));
+      .then(() => logger.logSuccess("MongoDB connected"))
+      .catch(err => logger.logError(`MongoDB connection error: ${err.message}`));
   } else {
-    console.log("📦 Using existing mongoose connection");
+    logger.logInfo("Using existing mongoose connection");
   }
   // ------------------------------------------
 
-  const authService = new AuthService(finalConfig);
-  const roleService = new RoleService();
   const auditService = new AuditService();
   const mfaService = new MFAService();
+
+  // Pass shared services into AuthService config so it can log/audit correctly
+  const authService = new AuthService({
+    ...finalConfig,
+    auditService,
+    mfaService
+  });
+  const roleService = new RoleService();
   const passwordPolicy = new PasswordPolicy(finalConfig.passwordPolicy);
   const { rateLimiter, limiterFor, verifyToken, checkRole, checkOwnershipOrAdmin } = createAuthMiddleware(finalConfig);
 
@@ -133,6 +144,26 @@ function auth(config = {}) {
     app.auditService = auditService;
     app.mfaService = mfaService;
     app.passwordPolicy = passwordPolicy;
+    app.authLogger = logger;
+
+    // EMAIL VERIFICATION
+    app.get(
+      finalConfig.routes.verify,
+      async (req, res, next) => {
+        try {
+          const token = req.query.token;
+          const user = await authService.verifyEmail(token);
+
+          res.json({
+            success: true,
+            message: 'Email verified successfully',
+            userId: user._id
+          });
+        } catch (err) {
+          next(err);
+        }
+      }
+    );
 
     // REGISTER
     app.post(
@@ -160,8 +191,10 @@ function auth(config = {}) {
             status: 'success'
           });
 
+          logger.logSuccess('User registered');
           res.status(201).json({ success: true, message: 'Registration successful' });
         } catch (err) {
+          logger.logError(`Register failed: ${err.message}`);
           next(err);
         }
       }
@@ -186,6 +219,7 @@ function auth(config = {}) {
             status: 'success'
           });
 
+          logger.logSuccess('Login successful');
           res.json({ success: true, ...result });
         } catch (err) {
           await auditService.logActivity({
@@ -195,6 +229,7 @@ function auth(config = {}) {
             status: 'failure',
             details: { error: err.message }
           });
+          logger.logError(`Login failed: ${err.message}`);
           next(err);
         }
       }
@@ -210,8 +245,10 @@ function auth(config = {}) {
         try {
           const result = await authService.verify2FA(req.body.userId, req.body.code);
           await auditService.logActivity({ userId: result.user._id, action: '2fa_verify', status: 'success' });
+          logger.logSuccess('2FA verified');
           res.json({ success: true, ...result });
         } catch (err) {
+          logger.logError(`2FA failed: ${err.message}`);
           next(err);
         }
       }
@@ -226,8 +263,10 @@ function auth(config = {}) {
       async (req, res, next) => {
         try {
           await authService.forgotPassword(req.body.email);
+          logger.logInfo('Password reset email triggered');
           res.json({ success: true, message: 'Password reset email sent if user exists' });
         } catch (err) {
+          logger.logError(`Forgot password failed: ${err.message}`);
           next(err);
         }
       }
@@ -242,8 +281,10 @@ function auth(config = {}) {
         try {
           await authService.resetPassword(req.body.token, req.body.newPassword);
           await auditService.logActivity({ action: 'password_reset', status: 'success' });
+          logger.logSuccess('Password reset completed');
           res.json({ success: true, message: 'Password reset successful' });
         } catch (err) {
+          logger.logError(`Reset password failed: ${err.message}`);
           next(err);
         }
       }
@@ -257,8 +298,10 @@ function auth(config = {}) {
       async (req, res, next) => {
         try {
           const result = await authService.refreshToken(req.body.refreshToken);
+          logger.logSuccess('Token refreshed');
           res.json({ success: true, ...result });
         } catch (err) {
+          logger.logError(`Refresh token failed: ${err.message}`);
           next(err);
         }
       }
@@ -275,8 +318,10 @@ function auth(config = {}) {
         try {
           const user = await authService.updateProfile(req.user.id, req.body);
           await auditService.logActivity({ userId: user._id, action: 'profile_update', status: 'success' });
+          logger.logSuccess('Profile updated');
           res.json({ success: true, user });
         } catch (err) {
+          logger.logError(`Profile update failed: ${err.message}`);
           next(err);
         }
       }
@@ -307,8 +352,10 @@ function auth(config = {}) {
               status: 'success',
               details: { provider: 'google' }
             });
+            logger.logSuccess('Google OAuth success');
             res.json({ success: true, accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, user: req.user });
           } catch (err) {
+            logger.logError(`Google OAuth failed: ${err.message}`);
             next(err);
           }
         });
@@ -328,9 +375,10 @@ function auth(config = {}) {
           : 'Internal Server Error';
       }
 
+      logger.logError(`Error ${status}: ${message}`);
       res.status(status).json({ success: false, error: message });
     });
   };
 }
 
-module.exports = { auth, ApiError };
+module.exports = { auth, ApiError, runAdaptiveTests, inferFeatureFlags, testCatalog };

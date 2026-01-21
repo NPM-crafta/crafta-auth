@@ -180,6 +180,24 @@ userSchema.methods.revokeAllSessions = async function () {
 };
 
 
+// Verify a backup code using MFA service and mark it as used
+userSchema.methods.verifyBackupCode = async function (rawCode, mfaService) {
+  if (!mfaService || !this.backupCodes || this.backupCodes.length === 0) {
+    return false;
+  }
+
+  const match = mfaService.verifyBackupCode(rawCode, this.backupCodes);
+  if (!match) {
+    return false;
+  }
+
+  // Mark the matched code as used and persist
+  this.backupCodes = this.backupCodes.map((c) =>
+    c.hash === match.hash ? { ...c.toObject?.() ?? c, used: true } : c
+  );
+  await this.save();
+  return true;
+};
 
 // Static helper: find user by refresh token and prune expired ones while returning valid user
 userSchema.statics.findByRefreshToken = async function (tokenString) {
