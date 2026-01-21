@@ -34,6 +34,34 @@ class AuthService {
   }
 
   /* ---------------------------------------------
+        VERIFY EMAIL
+  --------------------------------------------- */
+  async verifyEmail(token) {
+    if (!token) {
+      throw new ApiError('Verification token is required', 400);
+    }
+
+    const user = await User.findOne({ verificationToken: token }).select('+verificationToken');
+    if (!user) {
+      throw new ApiError('Invalid or expired verification token', 400);
+    }
+
+    user.isVerified = true;
+    user.verificationToken = undefined;
+    await user.save();
+
+    if (this.config.auditService) {
+      await this.config.auditService.logActivity({
+        userId: user._id,
+        action: 'email_verify',
+        status: 'success'
+      });
+    }
+
+    return user;
+  }
+
+  /* ---------------------------------------------
         LOGIN USER (WITH ATOMIC LOCKOUT)
   --------------------------------------------- */
   async login(email, password, deviceInfo) {
