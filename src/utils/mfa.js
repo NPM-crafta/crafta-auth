@@ -2,30 +2,39 @@
 const speakeasy = require('speakeasy');
 const qrcode = require('qrcode');
 const crypto = require('crypto');
+const ApiError = require('./api-error');
 
 class MFAService {
   async generateSecret(label, issuer = 'App') {
-    const secret = speakeasy.generateSecret({
-      length: 32,
-      name: label,
-      issuer
-    });
+    try {
+      const secret = speakeasy.generateSecret({
+        length: 32,
+        name: label,
+        issuer
+      });
 
-    const qrCodeUrl = await qrcode.toDataURL(secret.otpauth_url);
+      const qrCodeUrl = await qrcode.toDataURL(secret.otpauth_url);
 
-    return {
-      secret: secret.base32,
-      qrCode: qrCodeUrl
-    };
+      return {
+        secret: secret.base32,
+        qrCode: qrCodeUrl
+      };
+    } catch (err) {
+      throw ApiError.internal('Failed to generate MFA secret');
+    }
   }
 
   verifyToken(token, secret) {
-    return speakeasy.totp.verify({
-      secret,
-      encoding: 'base32',
-      token,
-      window: 1
-    });
+    try {
+      return speakeasy.totp.verify({
+        secret,
+        encoding: 'base32',
+        token,
+        window: 1
+      });
+    } catch (err) {
+      return false;
+    }
   }
 
   // Generate hashed backup codes (safer)

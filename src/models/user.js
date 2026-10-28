@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const validator = require('validator');
 const crypto = require('crypto');
+const ApiError = require('../utils/api-error');
 
 
 const SALT_ROUNDS = Number(process.env.SALT_ROUNDS) || 12;
@@ -51,6 +52,8 @@ const userSchema = new mongoose.Schema({
   }],
   isVerified: { type: Boolean, default: false },
   verificationToken: { type: String, select: false },
+  magicLinkToken: { type: String, select: false },
+  magicLinkExpires: { type: Date, select: false },
   passwordResetToken: { type: String, select: false },
   passwordResetExpires: { type: Date, select: false },
   loginAttempts: { type: Number, default: 0 },
@@ -58,11 +61,13 @@ const userSchema = new mongoose.Schema({
   twoFactorSecret: { type: String, select: false },
   twoFactorEnabled: { type: Boolean, default: false },
   refreshTokens: { type: [refreshTokenSchema], default: [] },
+  sessionVersion: { type: Number, default: 0 },
   customFields: { type: mongoose.Schema.Types.Mixed }
 }, { timestamps: true });
 
 // Indexes
 userSchema.index({ email: 1 }, { unique: true });
+userSchema.index({ magicLinkToken: 1 });
 userSchema.index({ 'refreshTokens.expires': 1 }); // helps queries that prune expired refresh tokens
 userSchema.index({ lockUntil: 1 });
 
@@ -90,9 +95,13 @@ userSchema.methods.comparePassword = async function (candidate) {
 };
 
 userSchema.methods.recordPasswordHistory = async function (previousPasswordHash) {
+  if (typeof previousPasswordHash !== 'string' || previousPasswordHash.length === 0) {
+    throw ApiError.internal('recordPasswordHistory requires previousPasswordHash');
+  }
+
   this.passwordHistory = this.passwordHistory || [];
   this.passwordHistory.push({
-    hash: previousPasswordHash || this.password,
+    hash: previousPasswordHash,
     changedAt: new Date()
   });
 
@@ -100,8 +109,6 @@ userSchema.methods.recordPasswordHistory = async function (previousPasswordHash)
   if (this.passwordHistory.length > 5) {
     this.passwordHistory.shift();
   }
-
-  await this.save();
 };
 
 userSchema.methods.setBackupCodes = async function (codes) {
@@ -109,7 +116,6 @@ userSchema.methods.setBackupCodes = async function (codes) {
     hash: c.hash,
     used: false
   }));
-  await this.save();
 };
 
 
@@ -124,20 +130,17 @@ userSchema.methods.addRefreshToken = async function (tokenString, expiresAt) {
     token: tokenString,
     expires: expiresAt
   });
-  await this.save();
   return tokenString;
 };
 
 // Revoke a specific refresh token (by token string)
 userSchema.methods.revokeRefreshToken = async function (tokenString) {
   this.refreshTokens = (this.refreshTokens || []).filter(t => t.token !== tokenString);
-  await this.save();
 };
 
 // Revoke all refresh tokens (e.g., on password reset)
 userSchema.methods.revokeAllRefreshTokens = async function () {
   this.refreshTokens = [];
-  await this.save();
 };
 
 // Remove expired refresh tokens (useful to call periodically or on sensitive flows)
@@ -166,17 +169,14 @@ userSchema.methods.addSession = async function (info) {
     userAgent: info.userAgent,
     ip: info.ip
   });
-  await this.save();
 };
 
 userSchema.methods.revokeSession = async function (sessionId) {
   this.sessions = this.sessions.filter(s => s.sessionId !== sessionId);
-  await this.save();
 };
 
 userSchema.methods.revokeAllSessions = async function () {
   this.sessions = [];
-  await this.save();
 };
 
 
@@ -195,7 +195,6 @@ userSchema.methods.verifyBackupCode = async function (rawCode, mfaService) {
   this.backupCodes = this.backupCodes.map((c) =>
     c.hash === match.hash ? { ...c.toObject?.() ?? c, used: true } : c
   );
-  await this.save();
   return true;
 };
 

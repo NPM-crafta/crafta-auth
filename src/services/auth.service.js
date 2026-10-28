@@ -47,12 +47,12 @@ class AuthService {
   --------------------------------------------- */
   async verifyEmail(token) {
     if (!token) {
-      throw new ApiError('Verification token is required', 400);
+      throw ApiError.badRequest('Verification token is required');
     }
 
     const user = await User.findOne({ verificationToken: token }).select('+verificationToken');
     if (!user) {
-      throw new ApiError('Invalid or expired verification token', 400);
+      throw ApiError.badRequest('Invalid or expired verification token');
     }
 
     user.isVerified = true;
@@ -71,17 +71,17 @@ class AuthService {
   /* ---------------------------------------------
         LOGIN USER (WITH ATOMIC LOCKOUT)
   --------------------------------------------- */
-  async login(email, password, deviceInfo) {
+  async login(email, password, deviceInfo = {}) {
     const user = await User.findOne({ email });
 
     if (!user) {
-      throw new ApiError('Invalid credentials', 401);
+      throw ApiError.invalidCredentials();
     }
 
     // If locked, do NOT allow login
     const securityAttemptsEnabled = this.config?.features?.securityAttempts !== false;
     if (securityAttemptsEnabled && user.isLocked()) {
-      throw new ApiError('Account locked. Try again later.', 403);
+      throw ApiError.accountLocked();
     }
 
     const isValid = await user.comparePassword(password);
@@ -89,7 +89,7 @@ class AuthService {
       if (securityAttemptsEnabled) {
         await this.incrementLoginAttempts(user);
       }
-      throw new ApiError('Invalid credentials', 401);
+      throw ApiError.invalidCredentials();
     }
 
     // RESET LOCKOUT automatically on correct login
@@ -120,9 +120,9 @@ class AuthService {
   async verify2FA(userId, code) {
     const user = await User.findById(userId).select('+twoFactorSecret');
 
-    if (!user) throw new ApiError('User not found', 404);
+    if (!user) throw ApiError.notFound('User not found');
     if (!user.twoFactorEnabled)
-      throw new ApiError('2FA is not enabled for this user', 400);
+      throw ApiError.badRequest('2FA is not enabled for this user');
 
     const ok = authenticator.verify({
       token: code,
@@ -132,7 +132,7 @@ class AuthService {
     // fallback: backup codes
     if (!ok) {
       const backupOK = await user.verifyBackupCode(code, this.config.mfaService);
-      if (!backupOK) throw new ApiError('Invalid 2FA code', 401);
+      if (!backupOK) throw ApiError.twoFactorFailed();
     }
 
 
@@ -147,10 +147,11 @@ class AuthService {
     // find only valid (non-expired) tokens
     const user = await User.findByRefreshToken(refreshToken);
 
-    if (!user) throw new ApiError('Invalid or expired refresh token', 401);
+    if (!user) throw ApiError.invalidToken();
 
     // Refresh token rotation (best practice)
-    await user.revokeRefreshToken(refreshToken);
+    user.revokeRefreshToken(refreshToken);
+    await user.save();
 
     const tokens = await this.generateTokens(user);
     await this.logAudit({
@@ -191,24 +192,20 @@ class AuthService {
       passwordResetExpires: { $gt: Date.now() }
     });
 
-    if (!user) throw new ApiError('Invalid or expired reset token', 400);
+    if (!user) throw ApiError.badRequest('Invalid or expired reset token');
 
-    // check password history
-    const reused = await Promise.all(
-      (user.passwordHistory || []).map(async (old) =>
-        bcrypt.compare(newPassword, old.hash)
-      )
-    );
-
-    if (reused.includes(true)) {
-      throw new ApiError('Cannot reuse previous passwords', 400);
+    // check password history (sequential, short-circuits on first match)
+    for (const old of (user.passwordHistory || [])) {
+      if (await bcrypt.compare(newPassword, old.hash)) {
+        throw ApiError.passwordReuse('Cannot reuse previous passwords');
+      }
     }
 
     const previousPasswordHash = user.password;
     user.password = newPassword;
 
     await user.recordPasswordHistory(previousPasswordHash);
-    await user.revokeAllRefreshTokens(); // session invalidate
+    user.revokeAllRefreshTokens(); // session invalidate
     user.passwordResetToken = undefined;
     user.passwordResetExpires = undefined;
     await this.logAudit({
@@ -216,7 +213,6 @@ class AuthService {
       action: 'password_reset',
       status: 'success'
     });
-
 
     await user.save();
     return user;
@@ -227,11 +223,12 @@ class AuthService {
   --------------------------------------------- */
   async generateBackupCodes(userId, mfaService) {
     const user = await User.findById(userId);
-    if (!user) throw new ApiError("User not found", 404);
+    if (!user) throw ApiError.notFound();
 
     const codes = mfaService.generateBackupCodes();
 
     await user.setBackupCodes(codes.map(c => ({ hash: c.hash })));
+    await user.save();
 
     await this.logAudit({
       userId,
@@ -249,7 +246,7 @@ class AuthService {
   --------------------------------------------- */
   async updateProfile(userId, updates) {
     const user = await User.findById(userId);
-    if (!user) throw new ApiError('User not found', 404);
+    if (!user) throw ApiError.notFound();
 
     await user.safeUpdate(updates);
     await this.logAudit({
@@ -269,7 +266,8 @@ class AuthService {
       {
         id: user._id,
         email: user.email,
-        role: user.role
+        role: user.role,
+        sessionVersion: user.sessionVersion || 0
       },
       this.config.env.JWT_SECRET,
       { expiresIn: this.config.accessTokenExpiry || '1h' }
@@ -280,7 +278,8 @@ class AuthService {
       Date.now() +
       (this.config.refreshTokenDays || 7) * 24 * 60 * 60 * 1000;
 
-    await user.addRefreshToken(refreshToken, expiresAt);
+    user.addRefreshToken(refreshToken, expiresAt);
+    await user.save();
 
     // prune expired refresh tokens in background
     await user.pruneExpiredRefreshTokens();
@@ -329,9 +328,10 @@ class AuthService {
   --------------------------------------------- */
   async logout(userId, sessionId) {
     const user = await User.findById(userId);
-    if (!user) throw new ApiError("User not found", 404);
+    if (!user) throw ApiError.notFound();
 
     await user.revokeSession(sessionId);
+    await user.save();
 
     await this.logAudit({
       userId,
@@ -344,12 +344,12 @@ class AuthService {
 
   async handleSocialLogin(provider, profile) {
     if (!profile) {
-      throw new ApiError('Social profile is required', 400);
+      throw ApiError.badRequest('Social profile is required');
     }
 
     const primaryEmail = profile.emails?.[0]?.value;
     if (!primaryEmail) {
-      throw new ApiError('Social provider did not return an email', 400);
+      throw ApiError.badRequest('Social provider did not return an email');
     }
 
     let user = await User.findOne({ email: primaryEmail });
@@ -366,13 +366,15 @@ class AuthService {
         }
       });
       await user.save();
-    } else if (profile.displayName) {
+    } else {
       user.customFields = {
         ...(user.customFields || {}),
         socialProvider: provider,
-        socialId: profile.id,
-        name: profile.displayName
+        socialId: profile.id
       };
+      if (profile.displayName) {
+        user.customFields.name = profile.displayName;
+      }
       await user.save();
     }
 

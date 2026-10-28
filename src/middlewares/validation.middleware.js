@@ -43,8 +43,9 @@ const profileUpdateValidator = [
   body().custom((value, { req }) => {
     // prevent sensitive fields in payload
     const forbidden = ['password', 'role', 'refreshTokens', 'isVerified', 'verificationToken', 'twoFactorSecret', '_id'];
+    const body = req.body || {};
     for (const f of forbidden) {
-      if (req.body.hasOwnProperty(f)) {
+      if (Object.prototype.hasOwnProperty.call(body, f)) {
         throw new Error(`Cannot update field: ${f}`);
       }
     }

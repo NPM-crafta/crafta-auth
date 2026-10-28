@@ -2,6 +2,8 @@
 const rateLimit = require('express-rate-limit');
 const jwt = require('jsonwebtoken');
 
+const ApiError = require('../utils/api-error');
+
 const createAuthMiddleware = (config) => {
   const noOpLimiter = (_req, _res, next) => next();
   const rateLimitEnabled = config?.features?.rateLimit !== false;
@@ -46,6 +48,15 @@ const createAuthMiddleware = (config) => {
     message: { success: false, error: 'Too many refresh attempts' }
   }) : noOpLimiter;
 
+  // Register limiter
+  const registerLimiter = rateLimitEnabled ? rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: config?.limits?.registerMax || 20,
+    message: { success: false, error: 'Too many registration attempts, please try later' },
+    standardHeaders: true,
+    legacyHeaders: false
+  }) : noOpLimiter;
+
   // Expose function to choose limiter per-route
   const limiterFor = (routeName) => {
     switch (routeName) {
@@ -54,19 +65,29 @@ const createAuthMiddleware = (config) => {
       case 'forgotPassword': return forgotPasswordLimiter;
       case 'refreshToken': return refreshLimiter;
       case 'refresh': return refreshLimiter;
+      case 'register': return registerLimiter;
       default: return genericLimiter;
     }
   };
 
 
   const extractToken = (req) => {
-    const authHeader = req.headers.authorization;
-    if (authHeader && authHeader.startsWith('Bearer ')) {
+    const headers = req.headers || {};
+    let authHeader = headers.authorization;
+    // Guard: duplicate headers arrive as arrays — take first string element
+    if (Array.isArray(authHeader)) {
+      authHeader = authHeader.find(h => typeof h === 'string') || null;
+    }
+    if (typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
       return authHeader.split(' ')[1];
     }
 
-    if (req.headers['x-access-token']) {
-      return req.headers['x-access-token'];
+    let xAccess = headers['x-access-token'];
+    if (Array.isArray(xAccess)) {
+      xAccess = xAccess.find(h => typeof h === 'string') || null;
+    }
+    if (typeof xAccess === 'string') {
+      return xAccess;
     }
 
     return null;
@@ -75,7 +96,7 @@ const createAuthMiddleware = (config) => {
   const verifyToken = (req, res, next) => {
     const token = extractToken(req);
     if (!token) {
-      return res.status(401).json({ success: false, error: 'No token provided' });
+      return next(ApiError.unauthorized('No token provided'));
     }
 
     try {
@@ -84,17 +105,20 @@ const createAuthMiddleware = (config) => {
       req.user = { id: decoded.id, role: decoded.role, email: decoded.email };
       next();
     } catch (err) {
-      return res.status(401).json({ success: false, error: 'Invalid or expired token' });
+      if (err.name === 'TokenExpiredError') {
+        return next(ApiError.expiredToken());
+      }
+      return next(ApiError.invalidToken());
     }
   };
 
   const checkRole = (roles = []) => {
     return (req, res, next) => {
       if (!req.user) {
-        return res.status(401).json({ success: false, error: 'Unauthorized' });
+        return next(ApiError.unauthorized());
       }
       if (!roles.includes(req.user.role)) {
-        return res.status(403).json({ success: false, error: 'Insufficient permissions' });
+        return next(ApiError.forbidden());
       }
       next();
     };
@@ -105,13 +129,13 @@ const createAuthMiddleware = (config) => {
     return async (req, res, next) => {
       try {
         const targetId = typeof getTargetUserId === 'function' ? getTargetUserId(req) : req.params.id;
-        if (!req.user) return res.status(401).json({ success: false, error: 'Unauthorized' });
+        if (!req.user) return next(ApiError.unauthorized());
         if (req.user.role === 'admin' || String(req.user.id) === String(targetId)) {
           return next();
         }
-        return res.status(403).json({ success: false, error: 'Insufficient permissions to modify this resource' });
+        return next(ApiError.forbidden('Insufficient permissions to modify this resource'));
       } catch (err) {
-        return res.status(500).json({ success: false, error: 'Server error' });
+        return next(ApiError.internal('Server error'));
       }
     };
   };
