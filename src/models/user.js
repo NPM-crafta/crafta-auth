@@ -48,7 +48,23 @@ const userSchema = new mongoose.Schema({
     sessionId: String,
     userAgent: String,
     ip: String,
-    createdAt: { type: Date, default: Date.now }
+    createdAt: { type: Date, default: Date.now },
+    lastActiveAt: { type: Date, default: Date.now }
+  }],
+  // Account linking: social accounts connected to this user
+  linkedAccounts: [{
+    provider: { type: String, enum: ['google', 'github', 'facebook'], required: true },
+    providerId: { type: String, required: true },
+    email: { type: String, required: true },
+    linkedAt: { type: Date, default: Date.now }
+  }],
+  // Device trust: remembered devices that can skip 2FA
+  trustedDevices: [{
+    deviceId: { type: String, required: true },
+    userAgent: String,
+    ip: String,
+    trustedAt: { type: Date, default: Date.now },
+    expiresAt: { type: Date, required: true }
   }],
   isVerified: { type: Boolean, default: false },
   verificationToken: { type: String, select: false },
@@ -179,6 +195,79 @@ userSchema.methods.revokeAllSessions = async function () {
   this.sessions = [];
 };
 
+//
+// ACCOUNT LINKING METHODS
+//
+
+// Link a social account to this user
+userSchema.methods.linkSocialAccount = async function (provider, providerId, email) {
+  this.linkedAccounts = this.linkedAccounts || [];
+
+  // Check if already linked
+  const existing = this.linkedAccounts.find(
+    a => a.provider === provider && a.providerId === providerId
+  );
+  if (existing) {
+    return existing;
+  }
+
+  this.linkedAccounts.push({ provider, providerId, email });
+  await this.save();
+  return this.linkedAccounts[this.linkedAccounts.length - 1];
+};
+
+// Unlink a social account
+userSchema.methods.unlinkSocialAccount = async function (provider, providerId) {
+  this.linkedAccounts = (this.linkedAccounts || []).filter(
+    a => !(a.provider === provider && a.providerId === providerId)
+  );
+  await this.save();
+};
+
+// Check if a social account is already linked
+userSchema.methods.hasLinkedAccount = function (provider, providerId) {
+  return (this.linkedAccounts || []).some(
+    a => a.provider === provider && a.providerId === providerId
+  );
+};
+
+//
+// DEVICE TRUST METHODS
+//
+
+// Trust a device (skip 2FA for this device)
+userSchema.methods.trustDevice = async function (deviceId, userAgent, ip, ttlDays = 30) {
+  this.trustedDevices = this.trustedDevices || [];
+
+  const expiresAt = new Date(Date.now() + ttlDays * 24 * 60 * 60 * 1000);
+
+  // Remove existing entry for same device
+  this.trustedDevices = this.trustedDevices.filter(d => d.deviceId !== deviceId);
+
+  this.trustedDevices.push({ deviceId, userAgent, ip, expiresAt });
+  await this.save();
+};
+
+// Check if a device is trusted
+userSchema.methods.isDeviceTrusted = function (deviceId) {
+  if (!this.trustedDevices || this.trustedDevices.length === 0) return false;
+  const device = this.trustedDevices.find(d => d.deviceId === deviceId);
+  if (!device) return false;
+  // Check expiry
+  return device.expiresAt > new Date();
+};
+
+// Revoke trust for a device
+userSchema.methods.revokeDeviceTrust = async function (deviceId) {
+  this.trustedDevices = (this.trustedDevices || []).filter(d => d.deviceId !== deviceId);
+  await this.save();
+};
+
+// Revoke all trusted devices
+userSchema.methods.revokeAllTrustedDevices = async function () {
+  this.trustedDevices = [];
+  await this.save();
+};
 
 // Verify a backup code using MFA service and mark it as used
 userSchema.methods.verifyBackupCode = async function (rawCode, mfaService) {
