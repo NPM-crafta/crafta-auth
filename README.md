@@ -21,6 +21,9 @@ Production-ready authentication library for Crafta apps, featuring plug-and-play
 12. **Standardized Error Handling**: Unified error format with 19 distinct `AUTH_*` codes.
 13. **CORS Middleware**: Explicit origin whitelisting for secure cross-origin requests.
 14. **Customizable Fields**: Flexible user model customization.
+15. **Social Account Linking**: Link Google/GitHub/Facebook to existing password accounts.
+16. **Device Trust**: Trusted devices can skip 2FA requirements.
+17. **Password Strength Meter**: Real-time password strength feedback API.
 
 ## Install
 ```bash
@@ -112,6 +115,39 @@ auth({
     }
   }
 })(app);
+```
+
+## Social Account Linking
+Link social accounts (Google, GitHub, Facebook) to existing password accounts:
+```javascript
+// Link Google account
+await app.authService.linkSocialAccount(userId, 'google', 'google-provider-id');
+
+// Unlink account
+await app.authService.unlinkSocialAccount(userId, 'google');
+```
+
+## Device Trust Setup
+Enable trusted devices that can skip 2FA:
+```javascript
+auth({
+  features: {
+    sessionManagement: true
+  }
+})(app);
+```
+
+## Password Strength Meter
+Enable the password strength API endpoint:
+```javascript
+auth({
+  features: {
+    passwordStrengthMeter: true
+  }
+})(app);
+
+// GET /password-strength?password=mypassword
+// Returns: { success: true, score: 2, strength: "fair" }
 ```
 
 ## RBAC Quick Use

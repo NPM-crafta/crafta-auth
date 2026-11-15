@@ -40,7 +40,13 @@ function inferFeatureFlags(authConfig = {}) {
     jwt: true, // core always on
     email: !!(authConfig.emailVerification && authConfig.smtp),
     oauth: !!(authConfig.social && authConfig.social.google),
-    twofa: true // library supports 2FA routes by default
+    twofa: true, // library supports 2FA routes by default
+    socialAccountLinking: authConfig.features?.socialAccountLinking === true,
+    sessionManagement: authConfig.features?.sessionManagement === true,
+    passwordStrengthMeter: authConfig.features?.passwordStrengthMeter === true,
+    passwordless: authConfig.features?.passwordless === true,
+    webhooks: !!authConfig.webhooks?.url,
+    auditLogs: authConfig.features?.auditLogs !== false
   };
 }
 

@@ -1,6 +1,7 @@
 const passport = require('passport');
 const cookieParser = require('cookie-parser');
 const csrf = require('csurf');
+const crypto = require('crypto');
 const helmet = require("helmet");
 const mongoose = require("mongoose");
 const jwt = require('jsonwebtoken');
@@ -632,6 +633,193 @@ function auth(config = {}) {
             next(err);
           }
         });
+    }
+
+    // ------------------------------------------
+    // SOCIAL ACCOUNT LINKING
+    // ------------------------------------------
+    if (finalConfig.features.socialAccountLinking === true) {
+      // Link social account
+      app.post(
+        finalConfig.routes.accountsLink || '/accounts/link',
+        verifyToken,
+        validators.accountLinkValidator,
+        validators.handleValidation,
+        async (req, res, next) => {
+          try {
+            const { provider, providerId } = req.body;
+            const user = await authService.linkSocialAccount(req.user.id, provider, providerId);
+            await safeAudit({
+              userId: req.user.id,
+              action: 'account_linked',
+              status: 'success',
+              details: { provider }
+            });
+            logger.logSuccess(`Account linked: ${provider}`);
+            res.json({ success: true, user });
+          } catch (err) {
+            logger.logError(`Account linking failed: ${err.message}`);
+            next(err);
+          }
+        }
+      );
+
+      // Unlink social account
+      app.delete(
+        ':provider/unlink',
+        verifyToken,
+        validators.accountUnlinkValidator,
+        async (req, res, next) => {
+          try {
+            const { provider } = req.params;
+            const user = await authService.unlinkSocialAccount(req.user.id, provider);
+            await safeAudit({
+              userId: req.user.id,
+              action: 'account_unlinked',
+              status: 'success',
+              details: { provider }
+            });
+            logger.logSuccess(`Account unlinked: ${provider}`);
+            res.json({ success: true, message: `Account ${provider} unlinked` });
+          } catch (err) {
+            logger.logError(`Account unlinking failed: ${err.message}`);
+            next(err);
+          }
+        }
+      );
+    }
+
+    // ------------------------------------------
+    // SESSION MANAGEMENT
+    // ------------------------------------------
+    if (finalConfig.features.sessionManagement === true) {
+      // List all user sessions
+      app.get(
+        finalConfig.routes.listSessions || '/profile/sessions',
+        verifyToken,
+        async (req, res, next) => {
+          try {
+            const User = require('./models/user');
+            const user = await User.findById(req.user.id).select('sessions');
+            if (!user) throw ApiError.notFound('User not found');
+
+            // Filter valid sessions only
+            const validSessions = (user.sessions || []).filter(s =>
+              !s.expiresAt || new Date(s.expiresAt) > new Date()
+            );
+
+            res.json({ success: true, sessions: validSessions });
+          } catch (err) {
+            logger.logError(`Failed to list sessions: ${err.message}`);
+            next(err);
+          }
+        }
+      );
+
+      // Trust a device (skip 2FA for trusted device)
+      app.post(
+        ':sessionId/trust',
+        verifyToken,
+        validators.trustDeviceValidator,
+        validators.handleValidation,
+        async (req, res, next) => {
+          try {
+            const User = require('./models/user');
+            const user = await User.findById(req.user.id);
+            if (!user) throw ApiError.notFound('User not found');
+
+            // Find the session
+            const session = (user.sessions || []).find(s => s.sessionId === req.body.sessionId);
+            if (!session) throw ApiError.notFound('Session not found');
+
+            // Extract device identifier from session or create new one
+            const deviceId = crypto.randomBytes(16).toString('hex');
+            await user.trustDevice(deviceId, session.userAgent, session.ip, req.body.ttlDays || 30);
+
+            await safeAudit({
+              userId: req.user.id,
+              action: 'device_trusted',
+              status: 'success',
+              details: { deviceId, ttlDays: req.body.ttlDays || 30 }
+            });
+
+            res.json({
+              success: true,
+              message: 'Device trusted successfully',
+              deviceId
+            });
+          } catch (err) {
+            logger.logError(`Failed to trust device: ${err.message}`);
+            next(err);
+          }
+        }
+      );
+
+      // Revoke a specific session
+      app.delete(
+        'sessions/:id',
+        verifyToken,
+        async (req, res, next) => {
+          try {
+            const User = require('./models/user');
+            const user = await User.findById(req.user.id);
+            if (!user) throw ApiError.notFound('User not found');
+
+            await sessionService.revokeSession(user, req.params.id);
+            await user.revokeRefreshToken(req.body.refreshToken);
+
+            await safeAudit({
+              userId: req.user.id,
+              action: 'session_revoked',
+              status: 'success',
+              details: { sessionId: req.params.id }
+            });
+
+            res.json({ success: true, message: 'Session revoked' });
+          } catch (err) {
+            logger.logError(`Failed to revoke session: ${err.message}`);
+            next(err);
+          }
+        }
+      );
+    }
+
+    // ------------------------------------------
+    // PASSWORD STRENGTH METER
+    // ------------------------------------------
+    if (finalConfig.features.passwordStrengthMeter === true) {
+      app.get(
+        '/password-strength',
+        validators.passwordStrengthValidator,
+        async (req, res, next) => {
+          try {
+            const password = req.query.password || req.body.password;
+            if (!password) {
+              return res.status(400).json({
+                success: false,
+                error: 'Password parameter required'
+              });
+            }
+
+            const score = getPasswordStrength(password);
+            const strengthLabels = ['very-weak', 'weak', 'fair', 'moderate', 'strong'];
+            const strength = strengthLabels[score] || 'very-weak';
+
+            res.json({
+              success: true,
+              score,
+              strength,
+              feedback: {
+                score: 0,
+                suggestions: score < 4 ? ['Add more characters', 'Use mixed case', 'Add numbers', 'Add symbols'] : []
+              }
+            });
+          } catch (err) {
+            logger.logError(`Password strength check failed: ${err.message}`);
+            next(err);
+          }
+        }
+      );
     }
 
     // ------------------------------------------

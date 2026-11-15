@@ -141,34 +141,6 @@ class EmailService {
     });
   }
 
-  async sendMagicLink(user, url) {
-    const html = this.loadTemplate("magic-link", {
-      name: user.name || user.email,
-      url
-    }) || `Sign in with this magic link: <a href="${url}">${url}</a><br>This link expires in 15 minutes.`;
-
-    return this.send({
-      to: user.email,
-      subject: "Your Magic Sign-In Link",
-      html,
-      text: `Sign in here: ${url} (expires in 15 minutes)`
-    });
-  }
-
-  async sendMagicLink(user, url) {
-    const html = this.loadTemplate("magic-link", {
-      name: user.name || user.email,
-      url
-    }) || `Sign in with this magic link: <a href="${url}">${url}</a><br>This link expires in 15 minutes.`;
-
-    return this.send({
-      to: user.email,
-      subject: "Your Magic Sign-In Link",
-      html,
-      text: `Sign in here: ${url} (expires in 15 minutes)`
-    });
-  }
-
   async sendAccountLockEmail(user) {
     const html = this.loadTemplate("account-locked", {
       name: user.name || user.email

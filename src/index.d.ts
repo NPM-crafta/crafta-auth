@@ -71,6 +71,10 @@ export interface SessionConfig {
   sessionExpiryMs?: number;
   /** Milliseconds before expiry at which the X-Session-Expires-In warning header is emitted. Default: 300000 (5 min). */
   warningThresholdMs?: number;
+  /** Enable IP binding for additional session security */
+  ipBinding?: boolean;
+  /** Regenerate session ID on login (invalidates old sessions) */
+  regenerateSessionIdOnLogin?: boolean;
 }
 
 export interface LockoutConfig {
@@ -86,6 +90,44 @@ export interface AuthFeaturesConfig {
   auditLogs?: boolean;
   twoFactor?: boolean;
   csrf?: boolean;
+  passwordless?: boolean;
+  webhooks?: boolean;
+  socialAccountLinking?: boolean;
+  sessionManagement?: boolean;
+  passwordStrengthMeter?: boolean;
+}
+
+export interface CraftaAuthRoutes {
+  register?: string;
+  login?: string;
+  verify?: string;
+  forgotPassword?: string;
+  resetPassword?: string;
+  refreshToken?: string;
+  profile?: string;
+  twoFactor?: string;
+  roles?: string;
+  permissions?: string;
+  magicLink?: string;
+  magicLinkVerify?: string;
+  accountsLink?: string;
+  listSessions?: string;
+}
+
+export interface LinkedAccount {
+  provider: 'google' | 'github' | 'facebook';
+  providerId: string;
+  email: string;
+  linkedAt: Date;
+}
+
+export interface SessionInfo {
+  sessionId: string;
+  userAgent: string;
+  ip: string;
+  createdAt: Date;
+  lastActiveAt: Date;
+  expiresAt?: Date;
 }
 
 export interface AuthConfig {
@@ -161,6 +203,8 @@ export interface AuthService {
   generateTokens(user: any): Promise<{ accessToken: string; refreshToken: string }>;
   logout(userId: string, sessionId: string): Promise<boolean>;
   handleSocialLogin(provider: string, profile: any): Promise<any>;
+  linkSocialAccount(userId: string, provider: string, providerId: string): Promise<any>;
+  unlinkSocialAccount(userId: string, provider: string): Promise<any>;
 }
 
 export interface RoleService {

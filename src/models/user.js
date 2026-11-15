@@ -281,9 +281,14 @@ userSchema.methods.verifyBackupCode = async function (rawCode, mfaService) {
   }
 
   // Mark the matched code as used and persist
-  this.backupCodes = this.backupCodes.map((c) =>
-    c.hash === match.hash ? { ...c.toObject?.() ?? c, used: true } : c
-  );
+  this.backupCodes = this.backupCodes.map((c) => {
+    const codeObj = { ...c };
+    if (c.hash === match.hash) {
+      codeObj.used = true;
+    }
+    return codeObj;
+  });
+  await this.save();
   return true;
 };
 

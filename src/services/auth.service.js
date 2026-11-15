@@ -425,6 +425,53 @@ class AuthService {
 
     return fields;
   }
+
+  /* ---------------------------------------------
+        SOCIAL ACCOUNT LINKING
+  --------------------------------------------- */
+  async linkSocialAccount(userId, provider, providerId) {
+    const user = await User.findById(userId);
+    if (!user) throw ApiError.notFound('User not found');
+
+    // Check if already linked
+    const existing = user.linkedAccounts?.find(
+      a => a.provider === provider && a.providerId === providerId
+    );
+    if (existing) {
+      return { alreadyLinked: true, account: existing, user };
+    }
+
+    await user.linkSocialAccount(provider, providerId, user.email);
+    await user.save();
+
+    await this.logAudit({
+      userId: user._id,
+      action: 'account_linked',
+      status: 'success',
+      details: { provider }
+    });
+
+    return { linked: true, user };
+  }
+
+  async unlinkSocialAccount(userId, provider) {
+    const user = await User.findById(userId);
+    if (!user) throw ApiError.notFound('User not found');
+
+    const linkedBefore = user.linkedAccounts?.some(a => a.provider === provider);
+
+    await user.unlinkSocialAccount(provider);
+    await user.save();
+
+    await this.logAudit({
+      userId: user._id,
+      action: 'account_unlinked',
+      status: 'success',
+      details: { provider }
+    });
+
+    return { unlinked: true, user };
+  }
 }
 
 module.exports = AuthService;
