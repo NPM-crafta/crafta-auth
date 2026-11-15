@@ -39,6 +39,30 @@ const refreshTokenValidator = [
   body('refreshToken').exists().withMessage('refreshToken required')
 ];
 
+const accountLinkValidator = [
+  body('provider').isIn(['google', 'github', 'facebook']).withMessage('Invalid provider'),
+  body('providerId').exists().withMessage('providerId required')
+];
+
+const accountUnlinkValidator = [
+  param('provider').isIn(['google', 'github', 'facebook']).withMessage('Invalid provider')
+];
+
+const sessionsListValidator = []; // GET endpoint, no body validation needed
+
+const trustDeviceValidator = [
+  body('sessionId').exists().withMessage('sessionId required'),
+  body('ttlDays').optional().isInt({ min: 1, max: 365 }).withMessage('ttlDays must be 1-3600')
+];
+
+const sessionRevokeValidator = [
+  param('id').exists().withMessage('session id required')
+];
+
+const passwordStrengthValidator = [
+  body('password').exists().withMessage('password required')
+];
+
 const profileUpdateValidator = [
   body().custom((value, { req }) => {
     // prevent sensitive fields in payload
@@ -73,6 +97,12 @@ module.exports = {
   resetPasswordValidator,
   twoFAValidator,
   refreshTokenValidator,
+  accountLinkValidator,
+  accountUnlinkValidator,
+  sessionsListValidator,
+  trustDeviceValidator,
+  sessionRevokeValidator,
+  passwordStrengthValidator,
   profileUpdateValidator,
   handleValidation
 };
